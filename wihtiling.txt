@@ -1,0 +1,81 @@
+#include <stdio.h>
+
+#define M 16
+#define N 16
+#define K 16
+#define TILE_SIZE 8
+
+__global__ void matrixMul(int* A, int* B, int* C, int m, int n, int k) {
+    __shared__ int ds_A[TILE_SIZE][TILE_SIZE];
+    __shared__ int ds_B[TILE_SIZE][TILE_SIZE];
+
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int sum = 0;
+    for (int t = 0; t < (k + TILE_SIZE - 1) / TILE_SIZE; ++t) {
+        if (row < m && t * TILE_SIZE + threadIdx.x < k) {
+            ds_A[threadIdx.y][threadIdx.x] = A[row * k + t * TILE_SIZE + threadIdx.x];
+        } else {
+            ds_A[threadIdx.y][threadIdx.x] = 0;
+        }
+
+        if (col < n && t * TILE_SIZE + threadIdx.y < k) {
+            ds_B[threadIdx.y][threadIdx.x] = B[(t * TILE_SIZE + threadIdx.y) * n + col];
+        } else {
+            ds_B[threadIdx.y][threadIdx.x] = 0;
+        }
+
+        __syncthreads();
+
+        for (int i = 0; i < TILE_SIZE; ++i) {
+            sum += ds_A[threadIdx.y][i] * ds_B[i][threadIdx.x];
+        }
+
+        __syncthreads();
+    }
+
+    if (row < m && col < n) {
+        C[row * n + col] = sum;
+    }
+}
+
+int main() {
+    int A[M][K], B[K][N], C[M][N];
+    int *devA, *devB, *devC;
+
+    // Initialize matrices A and B
+    // ...
+
+    // Allocate device memory
+    cudaMalloc((void**)&devA, M * K * sizeof(int));
+    cudaMalloc((void**)&devB, K * N * sizeof(int));
+    cudaMalloc((void**)&devC, M * N * sizeof(int));
+
+    // Copy input matrices from host to device
+    cudaMemcpy(devA, A, M * K * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(devB, B, K * N * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Launch kernel
+    dim3 threadsPerBlock(TILE_SIZE, TILE_SIZE);
+    dim3 numBlocks((N + threadsPerBlock.x - 1) / threadsPerBlock.x, (M + threadsPerBlock.y - 1) / threadsPerBlock.y);
+    matrixMul<<<numBlocks, threadsPerBlock>>>(devA, devB, devC, M, N, K);
+
+    // Copy result matrix from device to host
+    cudaMemcpy(C, devC, M * N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Free device memory
+    cudaFree(devA);
+    cudaFree(devB);
+    cudaFree(devC);
+
+    // Print result matrix
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
+            printf("%d ", C[i][j]);
+        }
+        printf("\n");
+    }
+
+    return 0;
+}
